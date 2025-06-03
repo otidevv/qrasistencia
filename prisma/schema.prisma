@@ -1,0 +1,90 @@
+generator client {
+    provider = "prisma-client-js"
+}
+
+datasource db {
+    provider = "postgresql" // o "sqlite"
+    url      = env("DATABASE_URL")
+}
+
+// 🔽 PEGA aquí tu modelo completo ↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓
+model User {
+    id           String            @id @default(cuid())
+    name         String
+    email        String            @unique
+    password     String
+    roleId       String
+    role         Role              @relation(fields: [roleId], references: [id])
+    attendances  Attendance[]
+    environments UserEnvironment[]
+
+    createdAt DateTime @default(now()) @db.Timestamptz
+    updatedAt DateTime @updatedAt @db.Timestamptz
+}
+
+model Role {
+    id   String @id @default(cuid())
+    name String @unique
+
+    users User[]
+}
+
+model Environment {
+    id          String            @id @default(cuid())
+    name        String            @unique
+    type        EnvironmentType
+    location    String?
+    qrCodes     EnvironmentQR[]
+    attendances Attendance[]
+    users       UserEnvironment[]
+
+    createdAt DateTime @default(now()) @db.Timestamptz
+    updatedAt DateTime @updatedAt @db.Timestamptz
+}
+
+enum EnvironmentType {
+    LAB
+    AULA
+    AUDITORIO
+}
+
+model EnvironmentQR {
+    id            String   @id @default(cuid())
+    environmentId String
+    code          String   @unique
+    expiresAt     DateTime @db.Timestamptz
+    isActive      Boolean  @default(true)
+    createdAt     DateTime @default(now()) @db.Timestamptz
+
+    environment Environment @relation(fields: [environmentId], references: [id])
+}
+
+model Attendance {
+    id            String   @id @default(cuid())
+    userId        String
+    environmentId String
+    qrCodeUsed    String
+    timestamp     DateTime @default(now()) @db.Timestamptz
+
+    user        User        @relation(fields: [userId], references: [id])
+    environment Environment @relation(fields: [environmentId], references: [id])
+}
+
+model UserEnvironment {
+    id            String @id @default(cuid())
+    userId        String
+    environmentId String
+
+    user        User        @relation(fields: [userId], references: [id])
+    environment Environment @relation(fields: [environmentId], references: [id])
+
+    @@unique([userId, environmentId])
+}
+
+model PasswordResetToken {
+    id        String   @id @default(cuid())
+    email     String
+    token     String   @unique
+    expiresAt DateTime @db.Timestamptz
+    createdAt DateTime @default(now()) @db.Timestamptz
+}
