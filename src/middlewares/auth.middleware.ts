@@ -1,42 +1,43 @@
+// src/middlewares/auth.middleware.ts
 import { Request, Response, NextFunction } from 'express';
-import { verifyToken, JwtPayload } from '../utils/jwt';
+import jwt from 'jsonwebtoken';
 
-export interface AuthRequest extends Request {
-  user?: JwtPayload;
+// Extender el tipo Request para incluir usuario
+declare global {
+  namespace Express {
+    interface Request {
+      user?: {
+        userId: string;
+        username: string;
+        role: string;
+        roleLevel: number;
+        email?: string;
+      };
+    }
+  }
 }
 
-// ✅ Middleware: Autenticación
-export const authenticateToken = (
-  req: AuthRequest,
-  res: Response,
-  next: NextFunction
-): void => {
-  const authHeader = req.headers.authorization;
-
-  if (!authHeader || !authHeader.startsWith('Bearer ')) {
-    res.status(401).json({ message: 'Token no proporcionado' });
-    return; // 👈 importante: salimos para evitar continuar
-  }
-
-  const token = authHeader.split(' ')[1];
-  const decoded = verifyToken(token);
-
-  if (!decoded) {
-    res.status(403).json({ message: 'Token inválido o expirado' });
-    return;
-  }
-
-  req.user = decoded;
-  next();
-};
-
-// ✅ Middleware: Autorización por rol
-export const authorizeRole = (...allowedRoles: string[]) => {
-  return (req: AuthRequest, res: Response, next: NextFunction): void => {
-    if (!req.user || !allowedRoles.includes(req.user.role)) {
-      res.status(403).json({ message: 'Acceso denegado' });
+export const authenticate = (req: Request, res: Response, next: NextFunction): void => {
+  try {
+    const token = req.headers.authorization?.split(' ')[1];
+    
+    if (!token) {
+      res.status(401).json({ 
+        success: false,
+        message: 'Token no proporcionado' 
+      });
       return;
     }
+
+    const decoded = jwt.verify(token, process.env.JWT_SECRET!) as any;
+    req.user = decoded;
+    
     next();
-  };
+  } catch (error) {
+    res.status(401).json({ 
+      success: false,
+      message: 'Token inválido o expirado' 
+    });
+    return;
+  }
 };

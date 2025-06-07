@@ -6,51 +6,438 @@ import { generateToken } from '../utils/jwt';
 
 const prisma = new PrismaClient();
 
-export const register = async (req: Request, res: Response) => {
-  const { name, email, password, roleName } = req.body;
+// Interfaces para tipos de registro
+interface RegisterStudentDTO {
+  codigoEstudiante: string;
+  dni: string;
+  fullName: string;
+  password: string;
+  email?: string;
+  phoneNumber?: string;
+  careerId: string;
+}
+
+interface RegisterUserDTO {
+  username: string;
+  name: string;
+  password: string;
+  email?: string;
+  roleName: string;
+}
+
+// ==================== REGISTRO DE ESTUDIANTE ====================
+export const registerStudent = async (req: Request, res: Response): Promise<void> => {
+  const data: RegisterStudentDTO = req.body;
 
   try {
-    const existing = await prisma.user.findUnique({ where: { email } });
-    if (existing) return res.status(400).json({ message: 'Correo ya registrado' });
+    // 1. Verificar que no existe el código de estudiante
+    const existingUser = await prisma.user.findUnique({ 
+      where: { username: data.codigoEstudiante } 
+    });
+    if (existingUser) {
+      res.status(400).json({ 
+        message: 'El código de estudiante ya está registrado' 
+      });
+      return;
+    }
 
-    const role = await prisma.role.findUnique({ where: { name: roleName } });
-    if (!role) return res.status(400).json({ message: 'Rol no válido' });
+    // 2. Verificar que no existe el DNI
+    const existingDNI = await prisma.studentProfile.findUnique({ 
+      where: { dni: data.dni } 
+    });
+    if (existingDNI) {
+      res.status(400).json({ 
+        message: 'El DNI ya está registrado' 
+      });
+      return;
+    }
 
-    const hashedPassword = await bcrypt.hash(password, 10);
+    // 3. Verificar que existe la carrera
+    const career = await prisma.career.findUnique({ 
+      where: { id: data.careerId } 
+    });
+    if (!career) {
+      res.status(400).json({ 
+        message: 'Carrera no válida' 
+      });
+      return;
+    }
 
+    // 4. Obtener rol de estudiante
+    const roleEstudiante = await prisma.role.findUnique({ 
+      where: { name: 'ESTUDIANTE' } 
+    });
+    if (!roleEstudiante) {
+      res.status(500).json({ 
+        message: 'Error de configuración: Rol ESTUDIANTE no existe' 
+      });
+      return;
+    }
+
+    // 5. Hash de contraseña
+    const hashedPassword = await bcrypt.hash(data.password, 10);
+
+    // 6. Crear usuario con perfil de estudiante (transacción)
     const user = await prisma.user.create({
       data: {
-        name,
-        email,
+        username: data.codigoEstudiante,
+        name: data.fullName,
+        email: data.email,
         password: hashedPassword,
-        roleId: role.id,
+        roleId: roleEstudiante.id,
+        isActive: true,
+        studentProfile: {
+          create: {
+            codigoEstudiante: data.codigoEstudiante,
+            dni: data.dni,
+            fullName: data.fullName,
+            phoneNumber: data.phoneNumber,
+            careerId: data.careerId
+          }
+        }
       },
+      include: {
+        role: true,
+        studentProfile: {
+          include: { career: true }
+        }
+      }
     });
 
-    return res.status(201).json({ message: 'Usuario creado correctamente' });
+    // 7. Log de auditoría
+    await prisma.auditLog.create({
+      data: {
+        action: 'STUDENT_REGISTRATION',
+        entityType: 'USER',
+        entityId: user.id,
+        metadata: {
+          codigoEstudiante: data.codigoEstudiante,
+          carrera: career.name,
+          timestamp: new Date()
+        }
+      }
+    });
+
+    res.status(201).json({ 
+      message: 'Estudiante registrado correctamente',
+      user: {
+        id: user.id,
+        username: user.username,
+        name: user.name,
+        role: user.role.name,
+        career: user.studentProfile?.career.name
+      }
+    });
+
   } catch (error) {
-    return res.status(500).json({ message: 'Error en el servidor', error });
+    console.error('Error en registro de estudiante:', error);
+    res.status(500).json({ 
+      message: 'Error en el servidor', 
+      error: process.env.NODE_ENV === 'development' ? error : undefined 
+    });
   }
 };
 
-export const login = async (req: Request, res: Response) => {
-  const { email, password } = req.body;
+// ==================== REGISTRO DE USUARIO GENERAL (Docente, Admin, etc) ====================
+export const registerUser = async (req: Request, res: Response): Promise<void> => {
+  const data: RegisterUserDTO = req.body;
 
   try {
-    const user = await prisma.user.findUnique({ where: { email }, include: { role: true } });
-    if (!user) return res.status(401).json({ message: 'Credenciales inválidas' });
+    // 1. Verificar que no existe el username
+    const existing = await prisma.user.findUnique({ 
+      where: { username: data.username } 
+    });
+    if (existing) {
+      res.status(400).json({ 
+        message: 'El nombre de usuario ya está registrado' 
+      });
+      return;
+    }
 
-    const valid = await bcrypt.compare(password, user.password);
-    if (!valid) return res.status(401).json({ message: 'Credenciales inválidas' });
+    // 2. Verificar rol válido
+    const role = await prisma.role.findUnique({ 
+      where: { name: data.roleName } 
+    });
+    if (!role) {
+      res.status(400).json({ 
+        message: 'Rol no válido' 
+      });
+      return;
+    }
 
-    const token = generateToken({
-      userId: user.id,
-      role: user.role.name,
-      email: user.email,
+    // 3. No permitir crear estudiantes por esta ruta
+    if (role.name === 'ESTUDIANTE') {
+      res.status(400).json({ 
+        message: 'Use el endpoint /register/student para registrar estudiantes' 
+      });
+      return;
+    }
+
+    // 4. Hash de contraseña
+    const hashedPassword = await bcrypt.hash(data.password, 10);
+
+    // 5. Crear usuario
+    const user = await prisma.user.create({
+      data: {
+        username: data.username,
+        name: data.name,
+        email: data.email,
+        password: hashedPassword,
+        roleId: role.id,
+        isActive: true
+      },
+      include: { role: true }
     });
 
-    return res.json({ token, user: { id: user.id, name: user.name, role: user.role.name } });
+    // 6. Log de auditoría
+    await prisma.auditLog.create({
+      data: {
+        action: 'USER_REGISTRATION',
+        entityType: 'USER',
+        entityId: user.id,
+        metadata: {
+          role: role.name,
+          timestamp: new Date()
+        }
+      }
+    });
+
+    res.status(201).json({ 
+      message: 'Usuario creado correctamente',
+      user: {
+        id: user.id,
+        username: user.username,
+        name: user.name,
+        role: user.role.name
+      }
+    });
+
   } catch (error) {
-    return res.status(500).json({ message: 'Error en el servidor', error });
+    console.error('Error en registro de usuario:', error);
+    res.status(500).json({ 
+      message: 'Error en el servidor', 
+      error: process.env.NODE_ENV === 'development' ? error : undefined 
+    });
+  }
+};
+
+// ==================== LOGIN ====================
+export const login = async (req: Request, res: Response): Promise<void> => {
+  const { username, password } = req.body;
+
+  try {
+    // 1. Buscar usuario por username
+    const user = await prisma.user.findUnique({ 
+      where: { username }, 
+      include: { 
+        role: true,
+        studentProfile: {
+          include: { career: true }
+        }
+      } 
+    });
+
+    if (!user || !user.isActive) {
+      res.status(401).json({ 
+        message: 'Credenciales inválidas' 
+      });
+      return;
+    }
+
+    // 2. Verificar contraseña
+    const valid = await bcrypt.compare(password, user.password);
+    if (!valid) {
+      res.status(401).json({ 
+        message: 'Credenciales inválidas' 
+      });
+      return;
+    }
+
+    // 3. Generar token con información relevante
+    const tokenPayload = {
+      userId: user.id,
+      username: user.username,
+      role: user.role.name,
+      roleLevel: user.role.level,
+      email: user.email || undefined
+    };
+
+    const token = generateToken(tokenPayload);
+
+    // 4. Log de auditoría
+    await prisma.auditLog.create({
+      data: {
+        userId: user.id,
+        action: 'LOGIN',
+        entityType: 'USER',
+        entityId: user.id,
+        metadata: {
+          timestamp: new Date(),
+          ip: req.ip,
+          userAgent: req.headers['user-agent']
+        }
+      }
+    });
+
+    // 5. Preparar respuesta según tipo de usuario
+    const responseUser: any = {
+      id: user.id,
+      username: user.username,
+      name: user.name,
+      email: user.email,
+      role: user.role.name,
+      roleLevel: user.role.level
+    };
+
+    // Si es estudiante, incluir información adicional
+    if (user.studentProfile) {
+      responseUser.studentInfo = {
+        codigoEstudiante: user.studentProfile.codigoEstudiante,
+        dni: user.studentProfile.dni,
+        career: user.studentProfile.career.name,
+        careerId: user.studentProfile.career.id
+      };
+    }
+
+    res.json({ 
+      token, 
+      user: responseUser,
+      message: 'Login exitoso'
+    });
+
+  } catch (error) {
+    console.error('Error en login:', error);
+    res.status(500).json({ 
+      message: 'Error en el servidor', 
+      error: process.env.NODE_ENV === 'development' ? error : undefined 
+    });
+  }
+};
+
+// ==================== CAMBIO DE CONTRASEÑA ====================
+export const changePassword = async (req: Request, res: Response): Promise<void> => {
+  // Verificar autenticación
+  if (!req.user) {
+    res.status(401).json({ 
+      message: 'Usuario no autenticado' 
+    });
+    return;
+  }
+
+  const { userId } = req.user;
+  const { currentPassword, newPassword } = req.body;
+
+  try {
+    // 1. Buscar usuario
+    const user = await prisma.user.findUnique({ 
+      where: { id: userId } 
+    });
+
+    if (!user) {
+      res.status(404).json({ 
+        message: 'Usuario no encontrado' 
+      });
+      return;
+    }
+
+    // 2. Verificar contraseña actual
+    const valid = await bcrypt.compare(currentPassword, user.password);
+    if (!valid) {
+      res.status(401).json({ 
+        message: 'Contraseña actual incorrecta' 
+      });
+      return;
+    }
+
+    // 3. Hash de nueva contraseña
+    const hashedPassword = await bcrypt.hash(newPassword, 10);
+
+    // 4. Actualizar contraseña
+    await prisma.user.update({
+      where: { id: userId },
+      data: { password: hashedPassword }
+    });
+
+    // 5. Log de auditoría
+    await prisma.auditLog.create({
+      data: {
+        userId: userId,
+        action: 'PASSWORD_CHANGE',
+        entityType: 'USER',
+        entityId: userId,
+        metadata: { timestamp: new Date() }
+      }
+    });
+
+    res.json({ 
+      message: 'Contraseña actualizada correctamente' 
+    });
+
+  } catch (error) {
+    console.error('Error al cambiar contraseña:', error);
+    res.status(500).json({ 
+      message: 'Error en el servidor' 
+    });
+  }
+};
+
+// ==================== OBTENER PERFIL ====================
+export const getProfile = async (req: Request, res: Response): Promise<void> => {
+  // Verificar autenticación
+  if (!req.user) {
+    res.status(401).json({ 
+      message: 'Usuario no autenticado' 
+    });
+    return;
+  }
+
+  const { userId } = req.user;
+
+  try {
+    const user = await prisma.user.findUnique({
+      where: { id: userId },
+      include: {
+        role: true,
+        studentProfile: {
+          include: { career: true }
+        }
+      }
+    });
+
+    if (!user) {
+      res.status(404).json({ 
+        message: 'Usuario no encontrado' 
+      });
+      return;
+    }
+
+    const profile: any = {
+      id: user.id,
+      username: user.username,
+      name: user.name,
+      email: user.email,
+      role: user.role.name,
+      roleLevel: user.role.level,
+      isActive: user.isActive
+    };
+
+    if (user.studentProfile) {
+      profile.studentInfo = {
+        codigoEstudiante: user.studentProfile.codigoEstudiante,
+        dni: user.studentProfile.dni,
+        fullName: user.studentProfile.fullName,
+        phoneNumber: user.studentProfile.phoneNumber,
+        career: user.studentProfile.career.name,
+        careerId: user.studentProfile.career.id
+      };
+    }
+
+    res.json(profile);
+
+  } catch (error) {
+    console.error('Error al obtener perfil:', error);
+    res.status(500).json({ 
+      message: 'Error en el servidor' 
+    });
   }
 };

@@ -1,24 +1,63 @@
-import express from 'express';
+// src/app.ts
+import express, { Application } from 'express';
 import cors from 'cors';
-import authRoutes from './routes/auth.routes';
-import qrRoutes from './routes/qr.routes';
-import environmentRoutes from './routes/environment.routes';
-import userRoutes from './routes/user.routes';
-import userEnvironmentRoutes from './routes/userEnvironment.routes';
-import asistenciaRoutes from './routes/asistencia.routes'; // ✅ NUEVA IMPORTACIÓN
-import statsRoutes from './routes/stats.routes'; // ✅ Agregar
+import helmet from 'helmet';
+import compression from 'compression';
+import morgan from 'morgan';
+import { corsOptions } from './config/cors';
+import { errorHandler, notFoundHandler } from './middlewares/error.middleware';
+import { generalLimiter } from './middlewares/rateLimit.middleware';
+import { stream } from './utils/logger';
+import routes from './routes';
 
-const app = express();
+// Create Express app
+const app: Application = express();
 
-app.use(cors());
-app.use(express.json());
+// ==================== SECURITY MIDDLEWARES ====================
+app.use(helmet({
+  contentSecurityPolicy: process.env.NODE_ENV === 'production',
+  crossOriginEmbedderPolicy: process.env.NODE_ENV === 'production'
+}));
 
-app.use('/api/auth', authRoutes);
-app.use('/api/qr', qrRoutes);
-app.use('/api/users', userRoutes);
-app.use('/api/environments', environmentRoutes);
-app.use('/api/asignaciones', userEnvironmentRoutes);
-app.use('/api/asistencia', asistenciaRoutes); // ✅ NUEVA RUTA
-app.use('/api/stats', statsRoutes); // ✅ Agregar esta línea
-// Rutas protegidas
+// ==================== CORS ====================
+app.use(cors(corsOptions));
+
+// ==================== COMPRESSION ====================
+app.use(compression());
+
+// ==================== LOGGING ====================
+if (process.env.NODE_ENV !== 'test') {
+  app.use(morgan('combined', { stream }));
+}
+
+// ==================== RATE LIMITING ====================
+app.use(generalLimiter);
+
+// ==================== BODY PARSING ====================
+app.use(express.json({ limit: '10mb' }));
+app.use(express.urlencoded({ extended: true, limit: '10mb' }));
+
+// ==================== STATIC FILES (if needed) ====================
+// app.use('/uploads', express.static('uploads'));
+
+// ==================== API ROUTES ====================
+app.use('/api', routes);
+
+// ==================== ROOT ROUTE ====================
+app.get('/', (req, res) => {
+  res.json({
+    message: 'QR Attendance System API',
+    version: process.env.API_VERSION || '1.0.0',
+    documentation: '/api/docs',
+    health: '/api/health'
+  });
+});
+
+// ==================== ERROR HANDLING ====================
+// 404 handler (debe estar antes del error handler)
+app.use(notFoundHandler);
+
+// General error handler (debe ser el último middleware)
+app.use(errorHandler);
+
 export default app;

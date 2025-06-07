@@ -3,43 +3,95 @@ generator client {
 }
 
 datasource db {
-    provider = "postgresql" // o "sqlite"
+    provider = "postgresql"
     url      = env("DATABASE_URL")
 }
 
-// 🔽 PEGA aquí tu modelo completo ↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓
+// ==================== USUARIOS ====================
+
 model User {
-    id           String            @id @default(cuid())
-    name         String
-    email        String            @unique
-    password     String
-    roleId       String
-    role         Role              @relation(fields: [roleId], references: [id])
-    attendances  Attendance[]
-    environments UserEnvironment[]
+    id       String  @id @default(cuid())
+    username String  @unique // Código estudiante, DNI, o custom
+    name     String
+    email    String? // Opcional para notificaciones
+    password String
+    roleId   String
+    role     Role    @relation(fields: [roleId], references: [id])
+    isActive Boolean @default(true)
+
+    // Relaciones principales
+    attendances         Attendance[]
+    hostedSessions      Session[]
+    managedEnvironments Environment[]
+    studentProfile      StudentProfile?
 
     createdAt DateTime @default(now()) @db.Timestamptz
     updatedAt DateTime @updatedAt @db.Timestamptz
 }
 
 model Role {
-    id   String @id @default(cuid())
-    name String @unique
+    id    String @id @default(cuid())
+    name  String @unique // ESTUDIANTE, DOCENTE, JEFE_LAB, ADMIN
+    level Int    @default(1) // 1=Estudiante, 2=Docente, 3=Jefe, 4=Admin
 
     users User[]
 }
 
-model Environment {
-    id          String            @id @default(cuid())
-    name        String            @unique
-    type        EnvironmentType
-    location    String?
-    qrCodes     EnvironmentQR[]
-    attendances Attendance[]
-    users       UserEnvironment[]
+// ==================== PERFIL ESTUDIANTE ====================
+
+model StudentProfile {
+    id     String @id @default(cuid())
+    userId String @unique
+    user   User   @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+    codigoEstudiante String  @unique
+    dni              String  @unique
+    fullName         String // Nombre completo concatenado
+    phoneNumber      String?
+    careerId         String
+    career           Career  @relation(fields: [careerId], references: [id])
 
     createdAt DateTime @default(now()) @db.Timestamptz
-    updatedAt DateTime @updatedAt @db.Timestamptz
+}
+
+model Career {
+    id       String           @id @default(cuid())
+    name     String           @unique
+    code     String?          @unique
+    students StudentProfile[]
+}
+
+// ==================== EXTERNOS ====================
+
+model ExternalPerson {
+    id          String  @id @default(cuid())
+    dni         String  @unique
+    fullName    String
+    email       String?
+    phone       String?
+    institution String?
+
+    attendances Attendance[]
+
+    createdAt DateTime @default(now()) @db.Timestamptz
+}
+
+// ==================== AMBIENTES ====================
+
+model Environment {
+    id       String          @id @default(cuid())
+    name     String          @unique
+    type     EnvironmentType
+    capacity Int?
+
+    // Un responsable simple
+    managerId String?
+    manager   User?   @relation(fields: [managerId], references: [id])
+
+    sessions Session[]
+
+    isActive  Boolean  @default(true)
+    createdAt DateTime @default(now()) @db.Timestamptz
 }
 
 enum EnvironmentType {
@@ -48,43 +100,126 @@ enum EnvironmentType {
     AUDITORIO
 }
 
-model EnvironmentQR {
-    id            String   @id @default(cuid())
-    environmentId String
-    code          String   @unique
-    expiresAt     DateTime @db.Timestamptz
-    isActive      Boolean  @default(true)
-    createdAt     DateTime @default(now()) @db.Timestamptz
+// ==================== SESIONES ====================
 
-    environment Environment @relation(fields: [environmentId], references: [id])
+model Session {
+    id            String      @id @default(cuid())
+    environmentId String
+    environment   Environment @relation(fields: [environmentId], references: [id])
+
+    name           String
+    type           SessionType
+    allowExternals Boolean     @default(false)
+
+    // Host
+    hostId   String?
+    host     User?   @relation(fields: [hostId], references: [id])
+    hostName String? // Si es externo
+
+    // Tiempo
+    startTime DateTime @db.Timestamptz
+    endTime   DateTime @db.Timestamptz
+
+    // QR Settings
+    qrRotationMinutes Int       @default(3)
+    currentQRCode     String? // QR actual
+    lastQRRotation    DateTime? @db.Timestamptz
+
+    // Relaciones
+    attendances Attendance[]
+    qrHistory   QRCode[] // Historial de QRs
+
+    isActive  Boolean  @default(true)
+    createdAt DateTime @default(now()) @db.Timestamptz
+
+    @@index([environmentId, startTime])
 }
+
+enum SessionType {
+    CLASE
+    CONFERENCIA
+    CAPACITACION
+    EVENTO
+}
+
+// ==================== QR CODES ====================
+
+model QRCode {
+    id        String  @id @default(cuid())
+    sessionId String
+    session   Session @relation(fields: [sessionId], references: [id])
+
+    code       String   @unique
+    validFrom  DateTime @db.Timestamptz
+    validUntil DateTime @db.Timestamptz
+    scanCount  Int      @default(0)
+
+    createdAt DateTime @default(now()) @db.Timestamptz
+
+    @@index([code])
+}
+
+// ==================== ASISTENCIA ====================
 
 model Attendance {
-    id            String   @id @default(cuid())
-    userId        String
-    environmentId String
-    qrCodeUsed    String
-    timestamp     DateTime @default(now()) @db.Timestamptz
+    id        String  @id @default(cuid())
+    sessionId String
+    session   Session @relation(fields: [sessionId], references: [id])
 
-    user        User        @relation(fields: [userId], references: [id])
-    environment Environment @relation(fields: [environmentId], references: [id])
-}
+    // Usuario O Externo
+    userId           String?
+    user             User?           @relation(fields: [userId], references: [id])
+    externalPersonId String?
+    externalPerson   ExternalPerson? @relation(fields: [externalPersonId], references: [id])
 
-model UserEnvironment {
-    id            String @id @default(cuid())
-    userId        String
-    environmentId String
+    // Tiempo
+    checkInTime  DateTime  @default(now()) @db.Timestamptz
+    checkOutTime DateTime? @db.Timestamptz
 
-    user        User        @relation(fields: [userId], references: [id])
-    environment Environment @relation(fields: [environmentId], references: [id])
+    // Detección simple
+    isSuspicious     Boolean @default(false)
+    suspiciousReason String? // "Múltiple IP", "Escaneo muy rápido", etc.
 
-    @@unique([userId, environmentId])
-}
+    // Datos básicos para análisis
+    ipAddress  String?
+    deviceInfo String? // User agent simple
 
-model PasswordResetToken {
-    id        String   @id @default(cuid())
-    email     String
-    token     String   @unique
-    expiresAt DateTime @db.Timestamptz
     createdAt DateTime @default(now()) @db.Timestamptz
+
+    @@unique([sessionId, userId])
+    @@unique([sessionId, externalPersonId])
+    @@index([isSuspicious])
+}
+
+// ==================== NOTIFICACIONES SIMPLES ====================
+
+model Notification {
+    id      String @id @default(cuid())
+    userId  String
+    type    String // "SUSPICIOUS", "LOW_ATTENDANCE", etc.
+    title   String
+    message String
+    data    Json?
+
+    isRead    Boolean  @default(false)
+    createdAt DateTime @default(now()) @db.Timestamptz
+
+    @@index([userId, isRead])
+}
+
+// ==================== LOGS ====================
+
+model AuditLog {
+    id         String  @id @default(cuid())
+    userId     String?
+    action     String // "LOGIN", "QR_SCAN", "REPORT_VIEW", etc.
+    entityType String?
+    entityId   String?
+    metadata   Json?
+
+    createdAt DateTime @default(now()) @db.Timestamptz
+
+    @@index([userId])
+    @@index([action])
+    @@index([createdAt])
 }
