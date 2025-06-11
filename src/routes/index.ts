@@ -4,7 +4,7 @@ import authRoutes from './auth.routes';
 import sessionRoutes from './session.routes';
 import attendanceRoutes from './attendance.routes';
 import environmentRoutes from './environment.routes';
-// import userRoutes from './user.routes';
+import userRoutes from './user.routes';
 import careerRoutes from './career.routes';
 // import reportRoutes from './report.routes';
 
@@ -34,7 +34,7 @@ router.use('/auth', authRoutes);
 router.use('/sessions', sessionRoutes);
 router.use('/attendance', attendanceRoutes);
 router.use('/environments', environmentRoutes);
-// router.use('/users', userRoutes);
+router.use('/users', userRoutes);
 router.use('/careers', careerRoutes);
 // router.use('/reports', reportRoutes);
 

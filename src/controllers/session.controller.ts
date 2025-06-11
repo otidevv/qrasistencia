@@ -651,7 +651,7 @@ export const generateQRCode = async (req: Request, res: Response): Promise<void>
     const qrData = {
       sessionId,
       code: newQRCode,
-      timestamp: now.toISOString()
+      timestamp: now.toLocaleString('sv-SE').replace(' ', 'T')  // ✅ Hora local de Perú
     };
 
     const qrImage = await QRCode.toDataURL(JSON.stringify(qrData), {

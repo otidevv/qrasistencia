@@ -86,12 +86,12 @@ export const registerUserSchema = Joi.object({
         'string.max': 'La contraseña no puede exceder 50 caracteres',
         'any.required': 'La contraseña es requerida'
       }),
-    email: Joi.string()
-      .email()
-      .optional()
-      .messages({
-        'string.email': 'El email debe ser válido'
-      }),
+    // email: Joi.string()
+    //   .email()
+    //   .optional()
+    //   .messages({
+    //     'string.email': 'El email debe ser válido'
+    //   }),
     roleName: Joi.string()
       .valid('DOCENTE', 'ADMIN', 'JEFE_LAB')
       .required()
